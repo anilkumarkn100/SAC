@@ -1,6 +1,6 @@
 ---
 name: sac-data-action
-description: SAP Analytics Cloud Data Action expert. Use when building, debugging, or verifying SAC Data Actions — advanced formula steps, allocation steps, copy steps. Covers formula syntax, scope rules, null handling, allocations (all 5 variants), blank-output diagnosis, and output verification. Invoke with /da-help, /da-context, /da-build, /da-allocate, or /da-verify.
+description: SAP Analytics Cloud Data Action expert. Use when building, debugging, or verifying SAC Data Actions — advanced formula steps, allocation steps, copy steps, cross-model copy steps, currency conversion steps, and embedded data action steps. Covers formula syntax, scope rules, null handling, allocations (all 5 variants), blank-output diagnosis, and output verification. Invoke with /da-help, /da-context, /da-build, /da-allocate, or /da-verify.
 ---
 
 # SAC Data Action Assistant
@@ -43,6 +43,21 @@ You are an SAC Data Action expert. You are first-time right. You answer from the
 6. Attach the CSV here
 
 Claude reads: exact dimension names, member IDs, data granularity, which members have booked data.
+
+---
+
+## Step Types — Overview
+
+| Step Type | Purpose | Currency conversion? |
+|---|---|---|
+| Advanced Formula | Calculations, conditional logic, cross-model LINK | No |
+| Copy Step | Copy data between members within same model | No |
+| Cross-Model Copy Step | Copy data from one planning model to another | No |
+| Currency Conversion Step | Copy across measures with different currencies | **Yes** |
+| Allocation Step (Legacy) | Proportional distribution using driver values | No |
+| Embedded Data Action Step | Reuse another data action as a step | Inherited |
+
+> **Currency conversion caveat**: Only the Currency Conversion Step handles currency. All other step types copy raw values without conversion. Mixed-currency copies via other step types can give unexpected results.
 
 ---
 
@@ -108,6 +123,8 @@ MEMBERSET [d/Date] = "202501" TO "202512"
 MEMBERSET [d/Product] = ("PRD001", "PRD002")
 MEMBERSET [d/Date] = BASEMEMBER([d/Date].[h/YQM], "2025")
 ```
+
+> **Version dimension in Advanced Formulas**: Version cannot be defined in MEMBERSET — it is treated specially and controlled by the TargetVersion parameter. Use it only inside RESULTLOOKUP or LINK functions.
 
 ### BASEMEMBER — all leaf members under a parent
 ```
@@ -315,6 +332,8 @@ FOREACH [d/Product]
 ENDFOR
 ```
 
+> **FOREACH not supported for Measures in models with measures.** Use DATA([d/Measures] = ...) instead.
+
 ---
 
 ## Variables
@@ -327,6 +346,8 @@ VARIABLEMEMBER #totalSales OF [d/Account]
 @GrowthRate = RESULTLOOKUP([d/Account] = "Rate") / 100
 DATA([d/Account] = "Forecast") = RESULTLOOKUP([d/Account] = "Actual") * (1 + @GrowthRate)
 ```
+
+> **Version dimension**: Not supported in VARIABLEMEMBER. Measures ARE supported: `VARIABLEMEMBER #total OF [d/Measures]`
 
 ---
 
@@ -345,6 +366,33 @@ IF LINK([DriverModel], [d/Version] = "Actual") = null THEN
   DATA() = 0
 ENDIF
 ```
+
+**LINK prerequisites** — linked model must have:
+- Same currency conversion setting (enabled or disabled)
+- Same date dimension granularity
+- Same fiscal year setting (or both off)
+- When source model has measures: must specify a single measure in LINK statement
+
+**Classic Account → Model with Measures migration**: Cross-model copy steps cannot copy between different model types. Use LINK in Advanced Formula instead:
+```
+DATA([d/Measures]="Quantity") = LINK([AccountModel], [d/Version]="public.Forecast", [d/Account]="Quantity")
+```
+Add `CONFIG.FLIPPING_SIGN_ACCORDING_ACCTYPE=ON` to preserve negative values on accounts with auto sign flipping.
+
+---
+
+## Advanced Formulas — Visual Tool vs Script Editor
+
+| | Visual Tool | Script Editor |
+|---|---|---|
+| **Target user** | Business users | IT / modeling specialists |
+| **Coding required** | No | Yes |
+| **How created** | Drag and drop | Write scripts |
+
+**Script-only functions** (not available in visual tool):
+`CARRYFORWARD`, `ATTRIBUTE`, `ELIMMEMBER`, `MOD`, `POWER`, `ROUND`, `FLOOR`, `CEILING`, `TRUNC`, `DAY`, `MONTH`, `YEAR`, `PERIOD`, `DAYSINMONTH`, `DAYSINYEAR`, `DATERATIO`, `CONFIG.HIERARCHY`, `CONFIG.TIME_ZONE_OFFSET`, `ELSEIF`, `ELSE`, some `MEMBERSET` forms, `AGGREGATE_DIMENSIONS`, `AGGREGATE_WRITETO`, `MODEL`
+
+**Rule**: Use the script editor for any complex business scenario. The visual tool is not a replacement — use it only for simple cases.
 
 ---
 
@@ -389,7 +437,7 @@ CONFIG.FLIPPING_SIGN_ACCORDING_ACCTYPE = ON
 FLOAT @Rate
 
 // 3. MEMBERSET (scope narrowing)
-MEMBERSET [d/Version] = "Budget"
+MEMBERSET [d/Version] = "Budget"          // NOT valid — version handled by TargetVersion param
 MEMBERSET [d/Date] = BASEMEMBER([d/Date].[h/YQM], "2025")
 
 // 4. Logic
@@ -400,65 +448,225 @@ DATA([d/Account] = "Forecast") = RESULTLOOKUP([d/Account] = "Actual", [d/Version
 
 ---
 
-## Blank Output — Diagnostic Checklist
+## Copy Step — Complete Reference
 
-When the formula runs without error but nothing appears:
+### Overview
+A copy step copies data between members within the **same model**. Currency conversion is not supported — all values are copied as-is.
 
-1. **Source is null, not zero** — null + anything = null. Check that source cells have booked data, not just a 0.
-2. **Wrong version filter** — source version correct? Has booked data in that scope?
-3. **Scope too narrow** — MEMBERSET excludes the cells you think it's writing to?
-4. **Scope too broad, writing to parent** — using a parent member instead of BASEMEMBER?
-5. **Date granularity mismatch** — formula uses "202501" but model stores at Quarter level?
-6. **Sign flip on INC/EXP** — result written but appears zero because INC and EXP cancelled? Add CONFIG.FLIPPING_SIGN_ACCORDING_ACCTYPE = ON.
-7. **Target version locked** — target is in a locked state?
-8. **RESULTLOOKUP returns one row per member** — missing AGGREGATE_DIMENSIONS for aggregation?
-9. **DATA.APPEND target was never reset** — stale prior-run data masking the result?
+Use cases:
+- Copy current-period forecast data to future periods
+- Copy data from one product/region to another
+- Copy between plan versions using SourceVersion + TargetVersion parameters
 
-Use **Data Action Tracing** (click in left margin of script editor to add tracepoints) to inspect the data state at any point in execution.
+### Section 1 — Filters (source scope)
+
+- Filters narrow which source data is read before copying.
+- **Version dimension**: Available **only in Filters** — never in Copy Rules. This is by SAP design.
+  - To copy from Forecast → Budget: add a Version filter here, select source version (or use a `SourceVersion` parameter).
+  - If no version filter is added, data copies **within the target version only** (the `TargetVersion` parameter controls the write target).
+- **Account dimension with multiple hierarchies**: The hierarchy you pick for the account filter must match the hierarchy used in Copy Rules for source members on that account dimension.
+- Parameters are supported in all filter fields.
+
+> **Critical rule**: Version is ONLY in Filters. It is intentionally absent from Copy Rules across all models — this is not a model configuration issue.
+
+### Section 2 — Aggregate To
+
+- Override the default disaggregation behaviour for specific dimensions.
+- **Default behaviour (no Aggregate To)**: Copied data follows the same distribution as the source. Equivalent to "Paste underlying values."
+- **With Aggregate To**: All data for that dimension aggregates into the single leaf member you specify.
+  - Example: aggregate Customer dimension to "#" (Unassigned) to remove customer distribution for privacy.
+- **Constraints**:
+  - Must choose a **single leaf member** (not a parent)
+  - Dimensions added here **cannot** also appear in Filters or Copy Rules for the same step
+- Parameters are supported.
+
+### Section 3 — Copy Rules
+
+- Define source → target member mappings. Optional: if Filters + Aggregate To fully describe the copy, no rules are needed.
+  - Example — copy 2025 Forecast to target version: only need a version Filter and date Filter. No copy rules needed.
+  - Example — copy 2025 Forecast to both 2025 and 2026: copy rule on Date dimension required.
+- **Version in Copy Rules**: Not available (see Section 1 — this is by design).
+- **Date dimension**: Non-leaf members at the same hierarchy level are valid targets (e.g., Q1 → Q2, or 2025 → 2026). This is an exception to the leaf-only rule.
+- **Measures**: Keep value range and decimal precision in mind. When using measure parameters, specify data types where possible.
+- **Account dimension with multiple hierarchies**: Source members in Copy Rules must use the same hierarchy as the account filter. Different hierarchies are allowed for target members.
+- Multiple target members per rule: value is copied to each target independently.
+- Multiple source → same target: data is aggregated into the single target.
+- Parameters are supported in From and To columns.
+
+### Section 4 — Options
+
+**Write Mode**
+
+| Mode | Behaviour | Default? |
+|---|---|---|
+| Append | Copied data is added to existing target values | **Yes — default** |
+| Overwrite | Existing target data is replaced by copied values | No — must set explicitly |
+
+> **Write Mode = Append is the default.** For a version copy scenario (clearing a version before writing), set Write Mode = **Overwrite** explicitly, or you will be adding on top of prior data.
+
+**Auto-Generation Mode** (how copy rules apply to time dimensions)
+
+| Mode | Behaviour |
+|---|---|
+| Detect Automatically | SAC chooses the most suitable mode |
+| Day Granularity | Based on number of days between members; accounts for leap years |
+| Week Granularity | Based on number of days between members; weeks always = 7 days (no leap year adjustment) |
+| Month/Year Granularity | Based on number of months between members |
+
+### Version copy — correct configuration pattern
+
+```
+Step type: Copy Step
+
+Filters:
+  Version = %SourceVersion%   ← required; controls read scope
+  [optional: Date, CostCenter, etc.]
+
+Aggregate To: [leave empty unless needed]
+
+Copy Rules: [add only if member remapping is needed]
+  (not Version — Version is never in Copy Rules)
+
+Options:
+  Write Mode = Overwrite       ← must set explicitly for version copy
+  Auto-Generation Mode = Detect Automatically
+
+Parameters:
+  SourceVersion   member  [source version to copy from]
+  TargetVersion   member  [write target — handled by SAC planning engine]
+```
+
+### Copy Step gotchas
+
+| # | Symptom | Cause | Fix |
+|---|---|---|---|
+| CS1 | Version not available in Copy Rules dropdown | By SAP design — Version is Filters-only | Use Version Filter + SourceVersion parameter instead |
+| CS2 | Data keeps accumulating on re-run | Write Mode = Append (default) | Set Write Mode = Overwrite |
+| CS3 | Dimension cannot be added to both Filters and Aggregate To | Mutual exclusion rule | Move to one section only |
+| CS4 | Aggregate To rejects parent member | Must be a single leaf member | Choose a leaf member or "#" |
+| CS5 | Copy rule Date validation warning | Non-leaf date targets must be at the same hierarchy level as source | Use same hierarchy level (e.g. Q1→Q2 works; Q1→2025 does not) |
+| CS6 | Account hierarchy mismatch error | Filter hierarchy ≠ Copy Rule source hierarchy for same account | Match hierarchies |
+| CS7 | Wrong values on partial-year copy | Auto-Generation Mode mismatch | Try Day Granularity or Month/Year explicitly |
+| CS8 | Nothing copied but no error | No booked data in source scope; or Aggregate To leaf member has no data | Verify source data exists in filter scope |
 
 ---
 
-## Common Script Patterns
+## Cross-Model Copy Step — Complete Reference
 
-### Carry-Forward (month-to-month)
-```
-MEMBERSET [d/Account] = "Headcount"
-MEMBERSET [d/Movement] = ("CLOSING", "OPENING")
-MEMBERSET [d/Date] = BASEMEMBER([d/Date].[h/YQM], "2025")
-CARRYFORWARD([d/Movement] = "CLOSING", [d/Movement] = "OPENING")
-```
+### Overview
+Copies data from one planning model (source) to another (target). The **target model** is always the data action's default model.
 
-### Year-over-Year Growth
-```
-MEMBERSET [d/Version] = "Budget"
-MEMBERSET [d/Date] = BASEMEMBER([d/Date].[h/YQM], "2025")
-MEMBERSET [d/Account] = "Revenue"
-DATA() = RESULTLOOKUP([d/Date] = PREVIOUS(12, "MONTH"), [d/Version] = "Actual") * (1 + %GrowthRate%)
-```
+- Currency conversion is **not supported** — all values are copied as-is.
+- Can only copy between the **same model type** (classic account ↔ classic account, or measures ↔ measures). To copy between different types, use LINK in Advanced Formulas.
+- Data booked on non-leaf members is ignored (warning message shown; dismiss to continue).
+- Parameters are supported throughout.
 
-### Partial-Period Proration
-```
-// Apportion cost based on how many days of the month fall within a contract
-MEMBERSET [d/Account] = "ContractCost"
-DATA() = RESULTLOOKUP([d/Account] = "FullMonthCost")
-       * DATERATIO([d/Date], %ContractStart%, %ContractEnd%)
-```
+### Configuration sections
 
-### Gross Margin (mixed account types)
-```
-CONFIG.FLIPPING_SIGN_ACCORDING_ACCTYPE = ON
-MEMBERSET [d/Account] = "GrossMargin"
-DATA() = RESULTLOOKUP([d/Account] = "NetRevenue")
-       + RESULTLOOKUP([d/Account] = "CostOfGoodsSold")
-// With flag ON: Revenue (900) + COGS (−700) = 200 ✓
-// With flag OFF: Revenue (900) + COGS (700) = 1600 ✗
-```
+**Source Model**: Pick the model whose data you want to copy.
+
+**Filter section**:
+- Version filter is **mandatory** — select the source version or use a parameter.
+- The TargetVersion parameter controls the write target (same pattern as regular Copy Step).
+- Additional filters (Date, CostCenter, etc.) are optional.
+- If dimension has a parent-child hierarchy: source members in copy rules should use the same hierarchy as the filter.
+
+**Mapping area**:
+For each target dimension, either map a source dimension or set a default value.
+
+- **Map** a source dimension when you want to distribute data across different members of the target dimension. Drag source dimension onto target dimension to map.
+- **Set default value** when no appropriate source dimension exists, or when you want to collapse all data to a single leaf member.
+  - Example: mapping currency-enabled source to currency-enabled target — set Currency dimension default to source model's currency.
+- Account and Date dimensions are auto-mapped and cannot be unmapped.
+  - Hidden accounts are NOT auto-mapped.
+  - To use a different date dimension or a leaf date as default, delete the auto-mapping.
+
+**Auto-Creation Strategy** (per dimension mapping):
+
+| Strategy | Behaviour |
+|---|---|
+| No Auto-Creation | Manual copy rules only |
+| Identical Names | Auto-maps members with identical names |
+| Identical Names (Including Ancestors) | Maps if source member name (or any ancestor name) = target member name |
+| First day of time period | Maps using first day of source period as reference (cross-granularity date mapping) |
+| Last day of time period | Maps using last day of source period as reference |
+
+> For date dimensions with different granularities (e.g. month → day), use First or Last day of time period.
+> When granularity and time settings are identical, First and Last day give the same result.
+
+**Completion Options** (for unmapped source members):
+
+| Option | Behaviour |
+|---|---|
+| Manual | Must create copy rules for every listed source member |
+| Fixed Value | Specify a default target for unmapped members; partial copy rules still allowed |
+| Ignore | Unmapped source members are filtered out |
+
+**Copy Rules** (within a dimension mapping):
+- Source member: does NOT need to be a leaf member
+- Target member: must be a leaf member (calculated members not allowed as targets)
+- Multiple targets: source value is copied to each target
+- Multiple sources → same target: values are aggregated
+- Account dimension with multiple hierarchies: source members must use same hierarchy as source context filter
+- Date dimension: incomplete mapping is allowed — unmatched time periods are silently ignored
+
+**Write Mode** (same as regular Copy Step):
+- Append (default)
+- Overwrite
 
 ---
 
-## Allocation — /da-allocate
+## Currency Conversion Step — Complete Reference
 
-### Step 1 — Intake questions
+### Prerequisites
+- Data action must be based on a **model with measures** that has currency conversion enabled.
+- Does NOT apply to classic account models.
+
+### Overview
+Copies data between base measures with different currencies, applying conversion rates from the model's currency table. Each conversion rule: source measure → convert → target measure.
+
+Parameters are supported throughout (filters, source/target measures).
+
+### Configuration
+
+**Context (Filters)**:
+- Filter dimensions to scope the source data.
+- Version filter: same pattern as other step types — filter to set source version; TargetVersion controls write target.
+
+**Conversion Rules** (one per source→target measure pair):
+- Source measure (From) and target measure (To).
+- Conversion and calculated measures are not available as source or target.
+- Multiple rules allowed — can copy, edit, duplicate, delete rules.
+
+**Conversion Settings per rule**:
+
+| Setting | Options | Description |
+|---|---|---|
+| Date | Booking Date | Use the rate that applies to each value's booking date |
+| | Booking Date + 1 / Booking Date − 1 | Use rate offset by one period from the booking date |
+| | Fixed Date | Use rates from a specific fixed date for all values |
+| Category | Dynamic | Use rates for the target version's category/rate version |
+| | Fixed category (e.g. Actuals) | Use rates for the specified category |
+| | Specific | Use rates for a specific rate version in the currency table |
+
+> Currency table must have rates for all currencies, dates, categories, and rate versions involved.
+
+**Write Mode**: Append or Overwrite (same as other step types).
+
+---
+
+## Allocation Step (Legacy) — /da-allocate
+
+### Prerequisites
+Set up the base legacy allocation step (in Allocations) before adding it to a data action. Only steps based on the data action's default model appear in the selection list.
+
+### Configuration
+- Add optional dimension filters (member-based or parameter-based).
+  - **Account dimension cannot be filtered here** — apply account filters in the base allocation step instead.
+  - When you pick a base allocation step that has an account filter, that filter appears in the list automatically.
+- Select the allocation step from the list.
+
+### Intake questions
 
 | # | Question | Why |
 |---|---|---|
@@ -470,7 +678,7 @@ DATA() = RESULTLOOKUP([d/Account] = "NetRevenue")
 | 6 | Will this be re-run in the same planning cycle? | Overwrite Target must be ON |
 | 7 | Each audit trail needs its own driver weights, or shared pool? | Reference Dimension (Variant 5) |
 
-### Step 2 — Variant decision tree
+### Variant decision tree
 
 ```
 Q: Driver data in a different version or year?
@@ -493,7 +701,7 @@ Variants 2–5 can be combined (e.g. Variant 3 + 5).
 Reciprocal CC → any variant + Number of Repetitions ≥ 7.
 ```
 
-### Step 3 — Allocation variant quick reference
+### Variant quick reference
 
 **Variant 1 — Basic Proportional**
 - Rule columns: Entity (Source) | Account (Driver) | Entity (Target)
@@ -524,7 +732,7 @@ Reciprocal CC → any variant + Number of Repetitions ≥ 7.
 
 **Default Reference Dimension**: Date (Year, Quarter, Month) is always pre-populated. Each period is allocated using its own period's driver weights.
 
-### Step 4 — Spec template
+### Spec template
 
 ```
 Allocation Step: [Name]
@@ -556,7 +764,7 @@ EXPECTED OUTPUT
   - Story:      add public.Allocs to Version filter to see results
 ```
 
-### Step 5 — Pre-build checklist
+### Pre-build checklist
 
 - [ ] Source version has booked data in the specified scope
 - [ ] Driver account has booked data for target members in same scope
@@ -602,6 +810,38 @@ EXPECTED OUTPUT
 
 ---
 
+## Embedded Data Action Step
+
+### Overview
+Runs another data action as a step within the current one. The embedded data action is a **reference** — it is not modified, and can still be run independently.
+
+Both data actions must be based on the **same default model**.
+
+**Use cases**:
+- Reuse a common calculation step across multiple data actions
+- Run the same step multiple times in one data action with different parameters
+  - Example: revenue calculation step parameterised by ProductType, embedded 3× with different product types
+
+**Nesting rules**:
+- Embedding a data action within multiple different data actions ✓
+- Embedding a data action multiple times in one data action ✓
+- Nesting multiple levels of embedded data actions ✓
+- Circular embedding (a data action embedded within itself, directly or indirectly) ✗
+
+> **Multi Action alternative**: For running data actions on different versions or models, or when you need to publish data between steps, use a Multi Action instead.
+
+### Configuration
+
+1. Select the data action to embed (must share the same default model).
+2. Set parameter values for the embedded data action's dynamic parameters:
+   - **Member parameters**: set a fixed member, or map to a parameter from the container data action.
+   - **Number parameters**: type a number, or choose a number parameter from the container data action.
+   - **TargetVersion**: not needed — the embedded data action runs on the same version as the container.
+   - If a parameter has a default value in the embedded data action, the default can be applied with one click.
+3. Validate the step before saving.
+
+---
+
 ## Tracing (Debugging)
 
 1. Open the data action script editor
@@ -619,10 +859,67 @@ TRACE(RESULTLOOKUP([d/Account] = "Revenue"), "Revenue before allocation")
 
 ---
 
+## Blank Output — Diagnostic Checklist
+
+When the formula runs without error but nothing appears:
+
+1. **Source is null, not zero** — null + anything = null. Check that source cells have booked data, not just a 0.
+2. **Wrong version filter** — source version correct? Has booked data in that scope?
+3. **Scope too narrow** — MEMBERSET excludes the cells you think it's writing to?
+4. **Scope too broad, writing to parent** — using a parent member instead of BASEMEMBER?
+5. **Date granularity mismatch** — formula uses "202501" but model stores at Quarter level?
+6. **Sign flip on INC/EXP** — result written but appears zero because INC and EXP cancelled? Add CONFIG.FLIPPING_SIGN_ACCORDING_ACCTYPE = ON.
+7. **Target version locked** — target is in a locked state?
+8. **RESULTLOOKUP returns one row per member** — missing AGGREGATE_DIMENSIONS for aggregation?
+9. **DATA.APPEND target was never reset** — stale prior-run data masking the result?
+10. **Copy Step: Write Mode = Append** — re-run accumulating on top of prior data? Set Write Mode = Overwrite.
+
+Use **Data Action Tracing** (click in left margin of script editor to add tracepoints) to inspect the data state at any point in execution.
+
+---
+
+## Common Script Patterns
+
+### Carry-Forward (month-to-month)
+```
+MEMBERSET [d/Account] = "Headcount"
+MEMBERSET [d/Movement] = ("CLOSING", "OPENING")
+MEMBERSET [d/Date] = BASEMEMBER([d/Date].[h/YQM], "2025")
+CARRYFORWARD([d/Movement] = "CLOSING", [d/Movement] = "OPENING")
+```
+
+### Year-over-Year Growth
+```
+MEMBERSET [d/Version] = "Budget"
+MEMBERSET [d/Date] = BASEMEMBER([d/Date].[h/YQM], "2025")
+MEMBERSET [d/Account] = "Revenue"
+DATA() = RESULTLOOKUP([d/Date] = PREVIOUS(12, "MONTH"), [d/Version] = "Actual") * (1 + %GrowthRate%)
+```
+
+### Partial-Period Proration
+```
+// Apportion cost based on how many days of the month fall within a contract
+MEMBERSET [d/Account] = "ContractCost"
+DATA() = RESULTLOOKUP([d/Account] = "FullMonthCost")
+       * DATERATIO([d/Date], %ContractStart%, %ContractEnd%)
+```
+
+### Gross Margin (mixed account types)
+```
+CONFIG.FLIPPING_SIGN_ACCORDING_ACCTYPE = ON
+MEMBERSET [d/Account] = "GrossMargin"
+DATA() = RESULTLOOKUP([d/Account] = "NetRevenue")
+       + RESULTLOOKUP([d/Account] = "CostOfGoodsSold")
+// With flag ON: Revenue (900) + COGS (−700) = 200 ✓
+// With flag OFF: Revenue (900) + COGS (700) = 1600 ✗
+```
+
+---
+
 ## Output Format for Every Spec
 
 Every data action spec must include:
-- Step type (Advanced Formula / Allocation / Copy)
+- Step type (Advanced Formula / Allocation / Copy / Cross-Model Copy / Currency Conversion / Embedded)
 - Source scope (version, dimensions, member filters)
 - Target scope (version, dimensions)
 - Advanced formula script (if applicable)
