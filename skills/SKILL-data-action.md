@@ -16,10 +16,145 @@ You are an SAC Data Action expert. You are first-time right. You answer from the
 | Command | What it does |
 |---|---|
 | `/da-help` | How to use this skill; how to export model data |
-| `/da-context` | Phase 1 — capture model context |
-| `/da-build` | Phase 2 — build a data action spec |
-| `/da-allocate` | Allocation intake — variant decision tree + spec |
+| `/da-model` | Load or confirm model context — fetches dimensions, attributes, and members via OData API |
+| `/da-model-test` | Self-test — Claude reports what it knows about the model and flags gaps |
+| `/da-context` | Phase 1 — capture model context (manual CSV path) |
+| `/da-build` | Phase 2 — build a data action spec *(requires model context)* |
+| `/da-allocate` | Allocation intake — variant decision tree + spec *(requires model context)* |
 | `/da-verify` | Phase 3 — verify actual vs expected output |
+
+---
+
+## /da-model — Load Model Context via OData API
+
+Run this before `/da-build` or `/da-allocate`. Claude checks if model context is already in the conversation. If yes, it confirms what it has. If no, it asks for three things:
+
+### Step 1 — Ask the user
+
+```
+To fetch your SAC model structure, I need three things:
+
+1. **Tenant URL**
+   Your SAC tenant base URL, e.g.: https://mycompany.eu10.hana.ondemand.com
+
+2. **Model ID**
+   How to find it:
+   - Open SAC → Files → locate your planning model → click to open it
+   - Look at the browser URL — the model ID is the alphanumeric segment after /models/
+   - Example: https://mycompany.eu10.hana.ondemand.com/sap/fpa/ui/app.html#/models/SAC_COST_PLAN
+     → Model ID = SAC_COST_PLAN
+
+3. **API Token (Bearer token)**
+   How to get it:
+   - In SAC, open your browser's Developer Tools (F12) → Network tab
+   - Refresh the page or perform any action
+   - Find any XHR request to your tenant → look at Request Headers → copy the Authorization header value
+   - It starts with "Bearer ey..."
+   - Alternatively, use an OAuth2 client credentials token if your admin has set up an API client under Security → App Integration → OAuth Clients
+```
+
+### Step 2 — Fetch metadata (dimensions + attributes)
+
+Once the user provides the above, construct and call:
+
+```
+GET {tenant_url}/api/v1/dataexport/providers/sac/{ModelID}/$metadata
+Headers:
+  Authorization: Bearer {token}
+  Accept: application/xml
+```
+
+Parse the returned XML to extract:
+- All dimension names (EntitySet names ending in `Members`)
+- Attributes per dimension (Property elements within each EntityType)
+- Version dimension members if accessible
+
+Store these as **MODEL CONTEXT** for this conversation session:
+```
+MODEL CONTEXT — {ModelID}
+Tenant: {tenant_url}
+Dimensions: [list with types — Version, Date, Account, Custom]
+Attributes per dimension: [key attributes only]
+```
+
+### Step 3 — Fetch members for key dimensions
+
+After metadata, fetch members for the most planning-relevant dimensions:
+
+```
+GET {tenant_url}/api/v1/dataexport/providers/sac/{ModelID}/{DimensionName}Members?$top=200
+Headers:
+  Authorization: Bearer {token}
+  Accept: application/json
+```
+
+Fetch members for: Version, Date (top-level periods), and the 2–3 custom dimensions the user identifies as most important (e.g. CostCenter, Entity, Product).
+
+Report a summary:
+```
+✓ Model context loaded — {ModelID}
+
+Dimensions found: 8
+  - d/Version (Version) — 5 members: public.Actual, public.Budget, ...
+  - d/Date (Date) — hierarchy: YQM — leaf level: month
+  - d/Account (Account) — [member count]
+  - d/CostCenter — 42 members loaded
+  - d/Entity — 18 members loaded
+  ... [remaining dimensions listed, members not fetched]
+
+Ready for /da-build or /da-allocate.
+```
+
+### Error handling
+
+| Error | Likely cause | What to say |
+|---|---|---|
+| 401 Unauthorized | Token expired or wrong | Ask user to refresh the Bearer token from DevTools |
+| 403 Forbidden | API access not enabled | Tenant needs OData export enabled under Security settings |
+| 404 Not Found | Wrong Model ID or tenant URL | Ask user to re-check the URL |
+| Empty metadata | Model ID correct but no EntitySets returned | Model may be a story-only model, not a planning model |
+
+---
+
+## /da-model-test — Self-Test Model Knowledge
+
+Claude reports exactly what it knows about the currently loaded model and flags gaps.
+
+Output format:
+
+```
+MODEL KNOWLEDGE CHECK — {ModelID}
+
+✓ KNOWN
+  Dimensions: [list all dimension names Claude has]
+  Version members: [list]
+  Date granularity: [Month / Quarter / Day]
+  CostCenter members: [list or "first 10 of 42"]
+  [other loaded dimensions]
+
+⚠ GAPS (Claude will guess if used — run /da-model to fix)
+  Account members: not loaded
+  [any dimension where only name is known, no members]
+
+✗ NO MODEL CONTEXT
+  [if /da-model has not been run — prompt user to run it]
+```
+
+If there are gaps in critical dimensions (Account, Version, or whichever dimension the user says drives allocation), recommend fetching those members before proceeding.
+
+---
+
+## Model Context Gate
+
+**Before starting `/da-build` or `/da-allocate`**, check if MODEL CONTEXT exists in the conversation.
+
+- If yes → proceed normally
+- If no → say:
+  ```
+  I don't have your model structure yet. Run /da-model first so I know
+  your exact dimension names and member IDs — this avoids guesses in the spec.
+  ```
+  Then pause and wait. Do not proceed with the spec until the user either runs `/da-model` or explicitly says "skip model context, proceed anyway."
 
 ---
 
