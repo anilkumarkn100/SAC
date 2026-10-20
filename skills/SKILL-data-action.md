@@ -1,6 +1,6 @@
 ---
 name: sac-data-action
-description: SAP Analytics Cloud Data Action expert. Use when building, debugging, or verifying SAC Data Actions — advanced formula steps, allocation steps, copy steps, cross-model copy steps, currency conversion steps, and embedded data action steps. Covers formula syntax, scope rules, null handling, allocations (all 5 variants), blank-output diagnosis, and output verification. Invoke with /da-help, /da-context, /da-build, /da-allocate, or /da-verify.
+description: SAP Analytics Cloud Data Action expert. Use when building, debugging, or verifying SAC Data Actions — advanced formula steps, allocation steps, copy steps, cross-model copy steps, currency conversion steps, fact deletion steps, and embedded data action steps. Covers formula syntax, scope rules, null handling, allocations (all 5 variants), blank-output diagnosis, and output verification. Invoke with /da-help, /da-context, /da-build, /da-allocate, or /da-verify.
 ---
 
 # SAC Data Action Assistant
@@ -54,6 +54,7 @@ Claude reads: exact dimension names, member IDs, data granularity, which members
 | Copy Step | Copy data between members within same model | No |
 | Cross-Model Copy Step | Copy data from one planning model to another | No |
 | Currency Conversion Step | Copy across measures with different currencies | **Yes** |
+| Fact Deletion Step | Delete facts, delete zeros, or set facts to zero | No |
 | Allocation Step (Legacy) | Proportional distribution using driver values | No |
 | Embedded Data Action Step | Reuse another data action as a step | Inherited |
 
@@ -513,6 +514,8 @@ Use cases:
 | Week Granularity | Based on number of days between members; weeks always = 7 days (no leap year adjustment) |
 | Month/Year Granularity | Based on number of months between members |
 
+**Copy Factor** — numeric multiplier applied to all copied values. Default = 1 (copy as-is). Set to 0.5 to halve values, 2 to double, etc. Supports parameters.
+
 ### Version copy — correct configuration pattern
 
 ```
@@ -548,6 +551,38 @@ Parameters:
 | CS6 | Account hierarchy mismatch error | Filter hierarchy ≠ Copy Rule source hierarchy for same account | Match hierarchies |
 | CS7 | Wrong values on partial-year copy | Auto-Generation Mode mismatch | Try Day Granularity or Month/Year explicitly |
 | CS8 | Nothing copied but no error | No booked data in source scope; or Aggregate To leaf member has no data | Verify source data exists in filter scope |
+
+---
+
+## Fact Deletion Step — Complete Reference
+
+### Overview
+Removes or zeroes out fact records in the data action's default model. Use this as a clean-up step before a copy or formula step to avoid accumulation issues, or to purge stale planning data.
+
+### Configuration sections
+
+**Context**:
+- Data Source: the data action's default model (read-only, cannot change)
+- Filters: narrow which records are affected — add dimension filters (Version, Date, CostCenter, etc.). Parameters are supported.
+  - Version filter: same pattern as other step types — filter to set which version's facts are affected.
+
+**Options**:
+
+**Delete Mode**
+
+| Mode | Behaviour |
+|---|---|
+| Delete Facts | Permanently removes the fact records from the model |
+| Delete Zeros from Facts | Removes only records where the value = 0; non-zero records are untouched |
+| Set Facts to Zero | Overwrites fact values with 0 rather than deleting the record; the cell exists but holds 0 |
+
+> **Delete Facts vs Set Facts to Zero**: Delete Facts removes the record entirely (cell becomes unbooked/null). Set Facts to Zero writes an explicit 0 (cell is booked with value 0). This matters for formulas that check `= null` vs `= 0`.
+
+### Common use patterns
+
+- **Pre-copy clean-up**: Add a Fact Deletion Step (Delete Facts, version filter = TargetVersion) before a Copy Step set to Append, so you get a clean target without needing Overwrite mode.
+- **Remove planning data for a closed period**: Filter to the specific date range + version and delete.
+- **Zero out a budget version**: Use Set Facts to Zero to preserve the version structure while clearing values.
 
 ---
 
