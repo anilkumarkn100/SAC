@@ -382,6 +382,21 @@ Add `CONFIG.FLIPPING_SIGN_ACCORDING_ACCTYPE=ON` to preserve negative values on a
 
 ---
 
+## Advanced Formulas Step — UI Panel Fields
+
+| Section | Field | Notes |
+|---|---|---|
+| Header | Name | Step label |
+| Header | Description | Free-text, optional |
+| Header | Step Active toggle | On/Off |
+| Header | Mode toggle | **Visual** / **Script** — switches between drag-and-drop canvas and script editor |
+| Context | Add Filters button | Adds dimension filters to scope the formula |
+| Variable | Add Variables button | Declares script variables (FLOAT, MEMBER, etc.) |
+| Canvas (Visual mode) | Begin → [formula blocks] → End | Drag blocks between Begin and End nodes; blocks include Calendar Year, Signflip (On/Off), Unbooked (On/Off) |
+| Canvas controls | Zoom In / Zoom Out / Fit to Screen / Minimap toggle | Standard canvas navigation |
+
+> In **Script mode**, the canvas is replaced by a code editor. All CONFIG, MEMBERSET, DATA(), RESULTLOOKUP() etc. are written directly. The Context (filters) and Variable sections remain visible as helpers.
+
 ## Advanced Formulas — Visual Tool vs Script Editor
 
 | | Visual Tool | Script Editor |
@@ -539,6 +554,21 @@ Parameters:
   TargetVersion   member  [write target — handled by SAC planning engine]
 ```
 
+### UI Panel Fields (what you see in the editor)
+
+| Section | Field | Notes |
+|---|---|---|
+| Header | Name | Step label shown in the step list |
+| Header | Description | Free-text, optional |
+| Header | Step Active toggle | On/Off — inactive steps are skipped at runtime |
+| Context | Data Source | Read-only — always the data action's default model |
+| Context | Filters | Add Filter button; dimension picker dropdown; Version filter here only |
+| Aggregate To | — | Add Dimension button; pick one leaf member per dimension |
+| Copy Rules | — | Per-dimension section; From/To member pickers |
+| Options | Write Mode | Append (default) / Overwrite |
+| Options | Auto-Generation Mode | Detect Automatically / Day / Week / Month-Year |
+| Options | Copy Factor | Numeric input; default = 1 |
+
 ### Copy Step gotchas
 
 | # | Symptom | Cause | Fix |
@@ -555,6 +585,17 @@ Parameters:
 ---
 
 ## Fact Deletion Step — Complete Reference
+
+### UI Panel Fields (what you see in the editor)
+
+| Section | Field | Notes |
+|---|---|---|
+| Header | Name | Step label |
+| Header | Description | Free-text, optional |
+| Header | Step Active toggle | On/Off |
+| Context | Data Source | Read-only — data action's default model |
+| Context | Filters | Add Filter button; dimension filters (Version, Date, etc.); parameters supported |
+| Options | Delete Mode | Dropdown: Delete Facts / Delete Zeros from Facts / Set Facts to Zero |
 
 ### Overview
 Removes or zeroes out fact records in the data action's default model. Use this as a clean-up step before a copy or formula step to avoid accumulation issues, or to purge stale planning data.
@@ -587,6 +628,22 @@ Removes or zeroes out fact records in the data action's default model. Use this 
 ---
 
 ## Cross-Model Copy Step — Complete Reference
+
+### UI Panel Fields (what you see in the editor)
+
+| Section | Field | Notes |
+|---|---|---|
+| Header | Name | Step label |
+| Header | Description | Free-text, optional |
+| Header | Step Active toggle | On/Off |
+| Context | Source Model | Free-text input + value-help button. User picks the source model. |
+| Context | Target Model | Read-only — always the data action's default model |
+| Context | Filters (Add Filter) | Dimension filter picker; Version filter required; parameters supported |
+| Mapping | [Dimension rows] | One row per target dimension; shows "Drop Source Dimension or Select default value…". Drag source dimensions from the source panel onto target rows |
+| Mapping | Source Dimensions panel | Left panel listing all source model dimensions; has a filter textbox for search |
+| Options | Write Mode | Append / Overwrite (no Copy Factor unlike regular Copy Step) |
+
+> Account and Date are auto-mapped and cannot be unmapped. Hidden accounts are NOT auto-mapped.
 
 ### Overview
 Copies data from one planning model (source) to another (target). The **target model** is always the data action's default model.
@@ -653,6 +710,22 @@ For each target dimension, either map a source dimension or set a default value.
 
 ## Currency Conversion Step — Complete Reference
 
+### UI Panel Fields (what you see in the editor)
+
+| Section | Field | Notes |
+|---|---|---|
+| Header | Name | Step label shown in the step list |
+| Header | Description | Free-text, optional |
+| Header | Step Active toggle | On/Off |
+| Context | Data Source | Read-only — data action's default model |
+| Context | Filters | Add Filter button; Version filter + any other dimension filters; parameters supported |
+| Conversion Rules | From | Source measure (value-help picker) — not conversion/calculated measures |
+| Conversion Rules | To | Target measure (value-help picker) — not conversion/calculated measures |
+| Conversion Rules | + Add Conversion Rule | Adds a new From→To row |
+| Options | Write Mode | Append / Overwrite |
+
+> Each conversion rule row has a delete button. Multiple rules allowed (one per source→target measure pair).
+
 ### Prerequisites
 - Data action must be based on a **model with measures** that has currency conversion enabled.
 - Does NOT apply to classic account models.
@@ -691,6 +764,24 @@ Parameters are supported throughout (filters, source/target measures).
 ---
 
 ## Allocation Step (Legacy) — /da-allocate
+
+### UI Panel Fields (what you see in the editor)
+
+| Section | Field | Notes |
+|---|---|---|
+| Header | Name | Step label |
+| Header | Description | Free-text, optional |
+| Header | Step Active toggle | On/Off |
+| Source Context | Data Source | Read-only — data action's default model |
+| Source Context | Filters | Add Filter button; Version + dimension filters; parameters supported. Account dimension cannot be filtered here — filter at the base allocation step |
+| Source Context | Write Mode → Keep Source | Checkbox. OFF = source values are zeroed after allocation; ON = source values are preserved |
+| Driver Context | Reference Dimension | Date (Year, Quarter, Month) pre-populated; Add Reference Dimension for Audit etc. Each entry means allocation uses per-period/per-member driver weights |
+| Target Context | Booking Account | "Select a Booking Account" picker (value-help). Empty = results land in source account. Set for Variant 3 |
+| Target Context | Write Mode → Overwrite Target | Checkbox. Must be ON to avoid double-counting on re-run |
+| Allocation Rules | Source Dimension | Column: pick source dimension; + adds a new dimension column |
+| Allocation Rules | Driver Dimension | Column: pick driver dimension; + adds a new driver column |
+| Allocation Rules | Target Dimension | Column: pick target dimension; + adds a new target column |
+| Allocation Rules | Toolbar | Copy, Paste ▾, Delete, Show All filter, Search |
 
 ### Prerequisites
 Set up the base legacy allocation step (in Allocations) before adding it to a data action. Only steps based on the data action's default model appear in the selection list.
@@ -846,6 +937,17 @@ EXPECTED OUTPUT
 ---
 
 ## Embedded Data Action Step
+
+### UI Panel Fields (what you see in the editor)
+
+| Section | Field | Notes |
+|---|---|---|
+| Header | Name | Step label |
+| Header | Description | Free-text, optional |
+| Header | Step Active toggle | On/Off |
+| — | Data Action Name *(required)* | Dropdown + browse icon. Lists data actions that share the same default model. After selection, parameter mapping rows appear |
+
+> The panel is intentionally minimal — there is no Context or Options section. All configuration lives in the embedded data action itself. Only parameter values are set here.
 
 ### Overview
 Runs another data action as a step within the current one. The embedded data action is a **reference** — it is not modified, and can still be run independently.
