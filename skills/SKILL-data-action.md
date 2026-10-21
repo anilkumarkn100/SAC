@@ -567,6 +567,42 @@ IF [d/Account].[p/ACCTYPE] = ("AST", "LEQ") THEN
 ENDIF
 ```
 
+**ATTRIBUTE() returns numeric values only.** It is valid as an input to math/conversion functions, IF conditions comparing numeric values, and DATA() writes. It is **not** valid as a member selector in RESULTLOOKUP or DATA().
+
+### Property reference as member selector in RESULTLOOKUP
+
+To look up data using a dimension attribute as a dynamic member selector, use the **property reference syntax** `[dimension].[property]` directly inside RESULTLOOKUP — not `ATTRIBUTE()`:
+
+```
+// Correct — property reference syntax
+DATA([d/Entity] = "HQ_Europe") = RESULTLOOKUP([d/Entity] = [d/CostCenter].[p/Region])
+```
+
+**This is the documented `<dimension>.<property>` form in the RESULTLOOKUP member_id grammar.**
+
+### Attribute-driven cross-dimension copy pattern
+
+Use case: copy GL Account values booked against Dimension A (e.g. HSCode) to Dimension B (e.g. ProductMaster), where Dimension B has an attribute that stores the matching Dimension A member ID.
+
+```
+// Copy from HSCode to ProductMaster based on HSCode attribute on ProductMaster
+MEMBERSET [d/ProductMaster] = ELIMMEMBER([d/ProductMaster].[LEVEL00].Members, [d/ProductMaster].[#])
+MEMBERSET [d/Account] = "YourGLAccount"
+
+FOREACH [d/ProductMaster]
+  DATA([d/ProductMaster] = [d/ProductMaster]) =
+    RESULTLOOKUP(
+      [d/HSCode] = [d/ProductMaster].[p/HSCode],
+      [d/ProductMaster] = "#"
+    )
+ENDFOR
+```
+
+**Prerequisites:**
+- `[d/ProductMaster].[p/HSCode]` attribute must store the **member ID** of the HSCode dimension (e.g. `"HS_8703"`), not a description
+- Source data must be booked against `[d/ProductMaster] = "#"` (unassigned) with the corresponding HSCode member
+- A Copy Step cannot do this — it requires explicit member mappings and has no runtime attribute lookup
+
 ---
 
 ## SisterMember
