@@ -626,13 +626,11 @@ Use case: copy GL Account values booked against Dimension A (e.g. HSCode) to Dim
 MEMBERSET [d/ProductMaster] = ELIMMEMBER([d/ProductMaster].[LEVEL00].Members, [d/ProductMaster].[#])
 MEMBERSET [d/Account] = "YourGLAccount"
 
-FOREACH [d/ProductMaster]
-  DATA([d/ProductMaster] = [d/ProductMaster]) =
-    RESULTLOOKUP(
-      [d/HSCode] = [d/ProductMaster].[p/HSCode],
-      [d/ProductMaster] = "#"
-    )
-ENDFOR
+DATA([d/ProductMaster] = [d/ProductMaster]) =
+  RESULTLOOKUP(
+    [d/HSCode] = [d/ProductMaster].[p/HSCode],
+    [d/ProductMaster] = "#"
+  )
 ```
 
 **Prerequisites:**
