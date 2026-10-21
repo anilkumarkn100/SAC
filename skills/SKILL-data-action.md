@@ -243,7 +243,7 @@ ENDIF
 | `CONFIG.READ_CALCULATED_MEMBER_VALUES` | ON | Allows RESULTLOOKUP to read calculated/parent members (HANA Cloud only) |
 | `CONFIG.TIME_ZONE_OFFSET` | numeric (e.g. 5.5) | Adjusts TODAY() for timezone |
 | `CONFIG.HIERARCHY [ModelName]` | dimension hierarchy path | Specifies which hierarchy to use |
-| `CONFIG.HIERARCHY.INCLUDE_MEMBERS_NOT_IN_HIERARCHY` | OFF (default) / ON | ON expands scope to members not in any hierarchy (orphan members) |
+| `CONFIG.HIERARCHY.INCLUDE_MEMBERS_NOT_IN_HIERARCHY` | `[d/DimensionName]` | Expands scope to include members not in any hierarchy for the specified dimension(s). Syntax: `CONFIG.HIERARCHY.INCLUDE_MEMBERS_NOT_IN_HIERARCHY [d/Dim1], [d/Dim2]`. No ON/OFF — the dimension itself is the argument. |
 | `CONFIG.MDXERRORLEVEL` | 0 / 1 / 2 | 0 = silent, 2 = error |
 
 CONFIG must appear at the top of the script, before MEMBERSET.
