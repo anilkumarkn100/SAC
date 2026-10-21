@@ -357,13 +357,22 @@ SAC treats unbooked cells as **null**, not zero. Arithmetic with null is not the
 
 > **Most common "formula ran but nothing appeared" cause**: Source cell is unbooked (null), not zero. null + anything = null.
 
-**`null` is a valid keyword** in IF conditions:
+### null keyword — valid contexts only
+
+The `null` keyword is **only valid** in IF conditions comparing `RESULTLOOKUP()` or `LINK()`:
+
 ```
+// Valid — null keyword with RESULTLOOKUP
 IF RESULTLOOKUP([d/Account] = "Revenue") = null THEN
   DATA([d/Account] = "Margin") = 0
 ENDIF
 
-// Safe division
+// Valid — null keyword with LINK
+IF LINK([DriverModel], [d/Version] = "Actual") = null THEN
+  DATA() = 0
+ENDIF
+
+// Safe division pattern
 IF RESULTLOOKUP([d/Account] = "Headcount") <> null THEN
   IF RESULTLOOKUP([d/Account] = "Headcount") <> 0 THEN
     DATA([d/Account] = "CostPerHead") = RESULTLOOKUP([d/Account] = "TotalCost")
@@ -371,6 +380,34 @@ IF RESULTLOOKUP([d/Account] = "Headcount") <> null THEN
   ENDIF
 ENDIF
 ```
+
+**`null` is NOT valid with `ATTRIBUTE()`** — ATTRIBUTE() returns a numeric value; comparing it to `null` is not supported in the grammar.
+
+### Property (attribute) empty check
+
+To check whether a dimension property has no value set, compare to an **empty string** `""` — not `null`:
+
+```
+// Check if property is empty
+IF [d/ProductMaster].[p/HSCode] = "" THEN
+  // property has no value set — skip or handle
+ENDIF
+
+// Check if property has a value
+IF [d/ProductMaster].[p/HSCode] <> "" THEN
+  DATA([d/ProductMaster] = [d/ProductMaster]) =
+    RESULTLOOKUP([d/HSCode] = [d/ProductMaster].[p/HSCode], [d/ProductMaster] = "#")
+ENDIF
+```
+
+### Null check summary
+
+| What you're checking | Correct syntax |
+|---|---|
+| RESULTLOOKUP() has no data | `RESULTLOOKUP() = null` or `<> null` |
+| LINK() has no data | `LINK(...) = null` or `<> null` |
+| Dimension property has no value | `[d/Dim].[p/Attr] = ""` or `<> ""` |
+| ATTRIBUTE() has no value | ❌ Not supported — no null check for ATTRIBUTE() |
 
 **Structural alternatives to null checks**:
 - `FOREACH.BOOKED` — skips unbooked members entirely
