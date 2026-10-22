@@ -619,24 +619,48 @@ DATA([d/Entity] = "HQ_Europe") = RESULTLOOKUP([d/Entity] = [d/CostCenter].[p/Reg
 
 ### Attribute-driven cross-dimension copy pattern
 
-Use case: copy GL Account values booked against Dimension A (e.g. HSCode) to Dimension B (e.g. ProductMaster), where Dimension B has an attribute that stores the matching Dimension A member ID.
+Use case: copy GL Account values booked against Dimension A (e.g. HSCode `#` unassigned product) to Dimension B (e.g. ProductMaster), where Dimension B has an attribute that stores the matching Dimension A member ID.
+
+**Confirmed working pattern** (full assignment — each product gets the full value from its mapped HS Code):
 
 ```
-// Copy from HSCode to ProductMaster based on HSCode attribute on ProductMaster
-MEMBERSET [d/ProductMaster] = ELIMMEMBER([d/ProductMaster].[LEVEL00].Members, [d/ProductMaster].[#])
-MEMBERSET [d/Account] = "YourGLAccount"
+CONFIG.HIERARCHY.INCLUDE_MEMBERS_NOT_IN_HIERARCHY = [d/DIM_PRODUCT],[d/DIM_DISTRIBUTION_CHANNEL],[d/DIM_GL_ACCOUNT]
+CONFIG.TIME_HIERARCHY = FISCALYEAR
+CONFIG.GENERATE_UNBOOKED_DATA = ON
 
-DATA([d/ProductMaster] = [d/ProductMaster]) =
+MEMBERSET [d/Measures] = "RATE"
+MEMBERSET [d/DIM_GL_ACCOUNT] = "A_XID"         // exact member ID — verify carefully
+MEMBERSET [d/DIM_DISTRIBUTION_CHANNEL] = "#"
+MEMBERSET [d/DIM_SALESPERSON] = "#"
+MEMBERSET [d/DIM_PROFIT_CENTER] = "#"
+MEMBERSET [d/DIM_AUDIT] = "#"
+MEMBERSET [d/DIM_HS_CODE] = "#"                // pins WRITE target to # on HS Code side
+
+DATA() =
   RESULTLOOKUP(
-    [d/HSCode] = [d/ProductMaster].[p/HSCode],
-    [d/ProductMaster] = "#"
+    [d/DIM_HS_CODE] = [d/DIM_PRODUCT].[p/HSCODE],  // reads from actual HS Code member
+    [d/DIM_PRODUCT] = "#"                           // reads from unassigned product
   )
 ```
 
+**How it works:**
+- `MEMBERSET [d/DIM_HS_CODE] = "#"` pins the **write** cell to `HS_CODE = #` (product-level row)
+- `RESULTLOOKUP([d/DIM_HS_CODE] = [d/DIM_PRODUCT].[p/HSCODE])` overrides the HS Code to the **source** member dynamically via the product's property — reads from `HS_CODE = 82084000` (or whatever the property holds)
+- `[d/DIM_PRODUCT] = "#"` in RESULTLOOKUP reads from the unassigned product bucket (where source data lives)
+- `CONFIG.GENERATE_UNBOOKED_DATA = ON` is **required** — the write targets (product-level rows) have no existing data, so without this config the formula cannot create them
+- No explicit `MEMBERSET [d/DIM_PRODUCT]` needed — all product members are iterated automatically via `GENERATE_UNBOOKED_DATA = ON`
+
 **Prerequisites:**
-- `[d/ProductMaster].[p/HSCode]` attribute must store the **member ID** of the HSCode dimension (e.g. `"HS_8703"`), not a description
-- Source data must be booked against `[d/ProductMaster] = "#"` (unassigned) with the corresponding HSCode member
+- `[d/DIM_PRODUCT].[p/HSCODE]` attribute must store the **member ID** of the HS Code dimension exactly as it appears in the dimension master data — not a description, no formatting difference
+- Source data must be booked against `[d/DIM_PRODUCT] = "#"` with the corresponding HS Code member
+- GL Account member ID must be exact — a wrong ID (e.g. `"XID"` vs `"A_XID"`) silently produces no output with no error
+- `CONFIG.HIERARCHY.INCLUDE_MEMBERS_NOT_IN_HIERARCHY` required for any dimension whose members are not in the planning hierarchy (product, distribution channel, GL account typically)
 - A Copy Step cannot do this — it requires explicit member mappings and has no runtime attribute lookup
+
+**Debugging silent no-output:**
+1. First test `DATA() = 999` with minimal MEMBERSET to confirm the write scope resolves to a real cell
+2. If 999 does not appear — check GL Account member ID (most common cause), check `GENERATE_UNBOOKED_DATA = ON`, check `CONFIG.HIERARCHY.INCLUDE_MEMBERS_NOT_IN_HIERARCHY`
+3. If 999 appears but RESULTLOOKUP returns nothing — check that source data is saved (not just unsaved draft with `*`), check property name matches exactly, check version context
 
 ---
 
