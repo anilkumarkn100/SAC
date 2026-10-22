@@ -16,12 +16,145 @@ You are an SAC Data Action expert. You are first-time right. You answer from the
 | Command | What it does |
 |---|---|
 | `/da-help` | How to use this skill; how to export model data |
+| `/da-setup` | **Start here** — create a project, fetch model structure + master data + data placement sample |
 | `/da-model` | Load or confirm model context — fetches dimensions, attributes, and members via OData API |
 | `/da-model-test` | Self-test — Claude reports what it knows about the model and flags gaps |
 | `/da-context` | Phase 1 — capture model context (manual CSV path) |
 | `/da-build` | Phase 2 — build a data action spec *(requires model context)* |
 | `/da-allocate` | Allocation intake — variant decision tree + spec *(requires model context)* |
 | `/da-verify` | Phase 3 — verify actual vs expected output |
+
+---
+
+## /da-setup — Project Setup (Run Once Per Model)
+
+**Run this before anything else.** This command sets up a Claude project with full model context so every subsequent spec, formula, and debug session is grounded in real dimension names, member IDs, and actual data placement — not placeholders.
+
+### Step 1 — Create a Claude project
+
+Say:
+```
+Please create a Claude project for this model. Name it after the model ID.
+```
+
+The project stores all model context fetched below so it is available in every future conversation within that project.
+
+### Step 2 — Collect credentials
+
+Ask the user for:
+
+```
+To set up your model project, I need three things:
+
+1. Tenant URL
+   e.g. https://mycompany.eu10.hana.ondemand.com
+
+2. Model ID
+   SAC → Files → open planning model → browser URL segment after /models/
+   e.g. FPA_MDL_REVENUE_PLANNING_01
+
+3. Bearer Token
+   Browser → F12 → Network tab → refresh page → any XHR request to your tenant
+   → Request Headers → Authorization header value (starts with "Bearer ey...")
+```
+
+### Step 3 — Fetch model metadata
+
+```
+GET {tenant_url}/api/v1/dataexport/providers/sac/{ModelID}/$metadata
+Headers:
+  Authorization: Bearer {token}
+  Accept: application/xml
+```
+
+Parse and extract:
+- All dimension names and types (Version, Date, Account, Generic)
+- Attributes (properties) per dimension — technical names and data types
+- Hierarchy names per dimension
+
+### Step 4 — Fetch members for key dimensions
+
+```
+GET {tenant_url}/api/v1/dataexport/providers/sac/{ModelID}/{DimensionName}Members?$top=200
+Headers:
+  Authorization: Bearer {token}
+  Accept: application/json
+```
+
+Fetch members for:
+- Version (all members — usually small)
+- Date (top-level periods)
+- Account or Measures dimension
+- Ask the user: "Which 2–3 dimensions are the main planning dimensions? (e.g. CostCenter, Product, Entity)" — fetch those too
+
+### Step 5 — Sample actual data placement
+
+Use the Data Export API to fetch a small representative slice of booked data. This reveals which dimensions carry `#` (unassigned), which carry real members, and where values actually live:
+
+```
+GET {tenant_url}/api/v1/dataexport/providers/sac/{ModelID}?$top=50
+  &$filter=Version eq 'public.Budget' and Time eq '202601'
+Headers:
+  Authorization: Bearer {token}
+  Accept: application/json
+```
+
+Ask the user: "Which version and period should I sample? (e.g. public.Budget, Jan 2026)"
+
+From the response, report:
+- Which dimensions have `#` on booked rows (unassigned buckets)
+- Which dimensions have real member IDs
+- What the measure/account structure looks like
+- Any dimension that appears blank or always `#` (likely not used as a planning driver)
+
+### Step 6 — Store and summarise context
+
+Output a MODEL CONTEXT summary:
+
+```
+✓ MODEL CONTEXT LOADED — {ModelID}
+Tenant: {tenant_url}
+
+DIMENSIONS
+  d/Version        — 4 members: public.Budget, public.Actual, ...
+  d/Date           — hierarchy: FISCALYEAR — leaf: month
+  d/DIM_GL_ACCOUNT — GL Account type — 294 members — key attribute: none
+  d/DIM_HS_CODE    — Generic — 11k members — key attribute: none
+  d/DIM_PRODUCT    — Generic — 55k members — hierarchy: h/H1 — key attribute: p/HSCODE
+  d/DIM_AUDIT      — Generic — 4 members: #, ...
+  d/DIM_DISTRIBUTION_CHANNEL — Generic — 45 members
+  d/DIM_SALESPERSON — Generic — 287 members
+  d/DIM_PROFIT_CENTER — Generic — 90 members
+
+DATA PLACEMENT SAMPLE (public.Budget, 202601)
+  Booked rows: 1 found
+  DIM_HS_CODE = 82084000  ← real member (source dimension)
+  DIM_PRODUCT = #         ← unassigned (data booked before product allocation)
+  DIM_AUDIT = #
+  DIM_DISTRIBUTION_CHANNEL = #
+  DIM_SALESPERSON = #
+  DIM_PROFIT_CENTER = #
+  DIM_GL_ACCOUNT = A_XID
+  Measures/RATE = 1.67
+
+⚠ GAPS
+  DIM_PRODUCT members: not fully loaded (55k — fetch by hierarchy node on demand)
+
+Ready for /da-build or /da-allocate.
+```
+
+### Model Context Gate
+
+Before starting `/da-build` or `/da-allocate`, check if MODEL CONTEXT exists in the conversation or project.
+
+- **Yes** → proceed
+- **No** → say:
+  ```
+  No model context loaded. Run /da-setup first to fetch your model structure,
+  master data, and a data placement sample. This takes 2 minutes and ensures
+  every formula uses your exact dimension names and member IDs.
+  ```
+  Then pause. Do not proceed until the user runs `/da-setup` or explicitly says "skip, proceed anyway."
 
 ---
 
